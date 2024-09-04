@@ -1,0 +1,87 @@
+services:
+  traefik:
+    container_name: traefik
+    image: ${DOCKER_IMAGE}
+    restart: always
+    network_mode: bridge
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+    environment:
+      - CF_API_EMAIL=${CF_DNS_EMAIL}
+      - CLOUDFLARE_DNS_API_TOKEN=${CF_API_TOKEN}
+      - CLOUDFLARE_ZONE_API_TOKEN=${CF_API_TOKEN}
+    command:
+      - "--global.sendanonymoususage=false"
+      - "--global.checknewversion=false"
+      - "--api=true"
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--api.debug=false"
+      - "--ping=true"
+      - "--accesslog=false"
+      - "--entrypoints.http.address=:80"
+      - "--entrypoints.https.address=:443"
+      - "--providers.docker=true"
+      - "--providers.docker.watch=true"
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.useBindPortIP=false"
+      - "--providers.docker.network=bridge"
+      - "--providers.file=true"
+      - "--providers.file.watch=true"
+      - "--providers.file.directory=/etc/traefik/config"
+      - "--providers.file.debugloggeneratedtemplate=true"
+      - "--certificatesresolvers.le.acme.email=${CF_DNS_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/data/ssl/acme.json"
+      - "--certificatesresolvers.le.acme.dnsChallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
+      - "--certificatesresolvers.le.acme.dnsChallenge.provider=cloudflare"
+      - "--certificatesresolvers.le.acme.dnsChallenge.delayBeforeCheck=30"   
+      - "--log.level=INFO"
+      - "--log.format=common"
+      
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=bridge"
+      
+      # Middlewares
+      - "traefik.http.middlewares.gzip.compress=true"
+      - "traefik.http.middlewares.redir-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redir-https.redirectscheme.permanent=false"
+      
+      # Redirect HTTP to HTTPS
+      - "traefik.http.routers.http-catchall.middlewares=redir-https"
+      - "traefik.http.routers.http-catchall.rule=hostregexp(`{host:.+}`)"
+      - "traefik.http.routers.http-catchall.entrypoints=http"
+      - "traefik.http.routers.http-catchall.service=noop@internal"
+
+      # Secure HTTPS settings
+      - "traefik.http.routers.traefik-dashboard-secure.middlewares=gzip@docker"
+      - "traefik.http.routers.traefik-dashboard-secure.entrypoints=https"
+      - "traefik.http.routers.traefik-dashboard-secure.rule=Host(`${SERVICE_DOMAIN}`)"
+      - "traefik.http.routers.traefik-dashboard-secure.tls=true"
+      - "traefik.http.routers.traefik-dashboard-secure.tls.certresolver=le"
+      - "traefik.http.routers.traefik-dashboard-secure.tls.domains[0].main=${CF_DNS_MAIN}"
+      - "traefik.http.routers.traefik-dashboard-secure.tls.domains[0].sans=${CF_DNS_LIST}"
+      - "traefik.http.routers.traefik-dashboard-secure.service=api@internal"
+
+
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /root/traefik/config:/etc/traefik/config/:ro
+      - /root/traefik:/data/ssl/
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider --proxy off localhost:8080/ping || exit 1"]
+      interval: 3s
+      retries: 12
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
